@@ -203,6 +203,24 @@ button {
   box-shadow: 0 5px 20px rgba(7, 27, 51, 0.05);
   margin-bottom: 14px;
 }
+.install-card {
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: 4px 12px;
+  align-items: center;
+  border-color: rgba(255, 196, 0, 0.55);
+}
+.install-card .install-icon {
+  grid-row: 1;
+  font-size: 36px;
+}
+.install-card p {
+  margin: 3px 0 0;
+}
+.install-card .btn {
+  grid-column: 1 / -1;
+  margin-top: 10px;
+}
 .section-title {
   font-size: 20px;
   margin: 0 0 5px;

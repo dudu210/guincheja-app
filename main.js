@@ -37,6 +37,7 @@ let locationRequestInProgress = false;
 let currentLocationMap = null;
 let currentLocationMarker = null;
 let currentAccuracyCircle = null;
+let deferredInstallPrompt = null;
 const problems = [
   ["pane", "Pneu furado"],
   ["motor", "Pane mecânica"],
@@ -111,6 +112,14 @@ function nav(active = "home") {
 function home() {
   const name = state.user?.name?.split(" ")[0];
   return `${header()}<main class="content"><section class="hero"><div class="eyebrow">Atendimento 24 horas</div><div class="truck">🚛</div><h1>${name ? `Olá, ${name}.<br>` : ""}Imprevisto na estrada?</h1><p>Encontre um guincho próximo, acompanhe a chegada e saiba o preço antes de confirmar.</p><button class="btn primary" data-go="request">SOLICITAR GUINCHO</button></section><section class="card"><h2 class="section-title">Como funciona</h2><div class="summary-row"><span>📍 Informe sua localização</span><b>1</b></div><div class="summary-row"><span>🚛 Encontramos um parceiro</span><b>2</b></div><div class="summary-row"><span>✅ Acompanhe o atendimento</span><b>3</b></div></section><section class="card"><strong>Segurança em primeiro lugar</strong><p class="muted">Profissionais identificados, avaliação e dados do veículo antes da chegada.</p></section></main>${nav("home")}`;
+}
+
+function installAppCard() {
+  const installed =
+    window.matchMedia("(display-mode: standalone)").matches ||
+    window.navigator.standalone === true;
+  if (installed) return "";
+  return `<section class="card install-card"><div class="install-icon">📲</div><div><strong>Tenha o GuincheJá no celular</strong><p class="muted">Instale o aplicativo para abrir direto pela tela inicial.</p></div><button class="btn primary" id="install-app">BAIXAR APLICATIVO</button></section>`;
 }
 function coverage() {
   const capital = serviceAreas.filter((x) => x.startsWith("São Paulo"));
@@ -372,7 +381,7 @@ function render() {
       .querySelector(".hero")
       .insertAdjacentHTML(
         "afterend",
-        '<button class="coverage-link" data-go="coverage"><b>📍 Atendemos São Paulo e Grande ABC</b><span>Veja todas as regiões disponíveis ›</span></button>',
+        `${installAppCard()}<button class="coverage-link" data-go="coverage"><b>📍 Atendemos São Paulo e Grande ABC</b><span>Veja todas as regiões disponíveis ›</span></button>`,
       );
   }
   bind();
@@ -397,6 +406,18 @@ function bind() {
   document
     .querySelectorAll("[data-go]")
     .forEach((b) => (b.onclick = () => go(b.dataset.go)));
+  const installButton = document.querySelector("#install-app");
+  if (installButton)
+    installButton.onclick = async () => {
+      if (deferredInstallPrompt) {
+        deferredInstallPrompt.prompt();
+        await deferredInstallPrompt.userChoice;
+        deferredInstallPrompt = null;
+        render();
+        return;
+      }
+      toast("No Chrome, toque em ⋮ e depois em Instalar aplicativo.");
+    };
   const form = document.querySelector("#signup");
   if (form)
     form.onsubmit = (e) => {
@@ -750,6 +771,15 @@ function bind() {
     };
   });
 }
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  deferredInstallPrompt = event;
+});
+window.addEventListener("appinstalled", () => {
+  deferredInstallPrompt = null;
+  toast("GuincheJá instalado com sucesso!");
+  render();
+});
 if ("serviceWorker" in navigator)
   navigator.serviceWorker.register("sw.js").catch(() => {});
 document.addEventListener("visibilitychange", () => {

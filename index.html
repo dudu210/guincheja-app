@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#071b33" />
+    <meta
+      name="description"
+      content="GuincheJá — solicite um guincho com rapidez e segurança."
+    />
+    <link rel="manifest" href="manifest.json" />
+    <link rel="stylesheet" href="styles.css" />
+    <title>GuincheJá</title>
+  
+<script>
+  // Nitron Multi-Page Support
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest('a');
+    if (a && a.href && (a.origin === window.location.origin || !a.href.startsWith('http'))) {
+      e.preventDefault();
+      window.location.href = a.href;
+    }
+  });
+</script>
+</head>
+  <body>
+    <div id="splash" class="splash-screen">
+      <img src="assets/guincheja-app-icon-v2.png" alt="Ícone GuincheJá" />
+      <div class="splash-logo">GUINCHE<span>JÁ</span></div>
+      <p>O GUINCHO QUE CHEGA ATÉ VOCÊ!</p>
+      <div class="splash-loader"></div>
+    </div>
+    <div id="app"></div>
+    <script src="main.js"></script>
+  </body>
+</html>

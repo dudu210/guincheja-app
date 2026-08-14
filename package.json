@@ -1,0 +1,9 @@
+{
+  "name": "guincheja-app",
+  "version": "0.9.4",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/app.test.js",
+    "start": "python3 -m http.server 4173"
+  }
+}

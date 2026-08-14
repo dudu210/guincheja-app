@@ -34,6 +34,9 @@ const initialState = {
 };
 let state = { ...initialState };
 let locationRequestInProgress = false;
+let currentLocationMap = null;
+let currentLocationMarker = null;
+let currentAccuracyCircle = null;
 const problems = [
   ["pane", "Pneu furado"],
   ["motor", "Pane mecânica"],
@@ -135,7 +138,49 @@ function clientLogin() {
 }
 function request() {
   if (!state.user) return state.clientAccount ? clientLogin() : signup();
-  return `${header("Novo chamado", true)}<main class="content"><div class="coverage-badge">✓ Atendimento em São Paulo e Grande ABC</div><h1 class="section-title">Onde você está?</h1><p class="subtitle">A localização do celular será usada automaticamente.</p><div class="map"><div class="pin you"><span>●</span></div></div><div class="gps-status" id="gps-status"><b>📍 Localização do celular</b><span>${state.request?.latitude ? "Localização encontrada" : "Buscando sua posição atual…"}</span></div><label class="field"><span>Cidade e região</span><select id="service-area"><option value="">Selecione a área</option>${serviceAreas.map((x) => `<option ${state.request?.area === x ? "selected" : ""}>${x}</option>`).join("")}</select></label><label class="field"><span>Ponto de partida</span><div class="location-row"><input id="origin" placeholder="Aguardando o GPS ou digite o endereço" value="${state.request?.origin || ""}"/><button id="locate" type="button" aria-label="Atualizar localização">◎</button></div></label><label class="field"><span>Destino do veículo</span><input id="destination" placeholder="Para onde vamos levar?" value="${state.request?.destination || ""}"/></label><button class="btn primary" id="to-problem">CONFIRMAR ÁREA E CONTINUAR</button><button class="btn ghost login-link" data-go="coverage">VER TODAS AS ÁREAS ATENDIDAS</button></main>`;
+  return `${header("Novo chamado", true)}<main class="content"><div class="coverage-badge">✓ Atendimento em São Paulo e Grande ABC</div><h1 class="section-title">Onde você está?</h1><p class="subtitle">Permita o GPS para mostrar sua posição no mapa.</p><div id="current-location-map" class="real-map" role="application" aria-label="Mapa da localização atual"></div><div class="gps-status" id="gps-status"><b>📍 Localização do celular</b><span>${state.request?.latitude ? "Localização encontrada" : "Buscando sua posição atual…"}</span></div><label class="field"><span>Cidade e região</span><select id="service-area"><option value="">Selecione a área</option>${serviceAreas.map((x) => `<option ${state.request?.area === x ? "selected" : ""}>${x}</option>`).join("")}</select></label><label class="field"><span>Ponto de partida</span><div class="location-row"><input id="origin" placeholder="Aguardando o GPS ou digite o endereço" value="${state.request?.origin || ""}"/><button id="locate" type="button" aria-label="Atualizar localização">◎</button></div></label><label class="field"><span>Destino do veículo</span><input id="destination" placeholder="Para onde vamos levar?" value="${state.request?.destination || ""}"/></label><button class="btn primary" id="to-problem">CONFIRMAR ÁREA E CONTINUAR</button><button class="btn ghost login-link" data-go="coverage">VER TODAS AS ÁREAS ATENDIDAS</button></main>`;
+}
+function initCurrentLocationMap() {
+  const container = document.querySelector("#current-location-map");
+  if (!container || typeof L === "undefined") return;
+  currentLocationMarker = null;
+  currentAccuracyCircle = null;
+  const latitude = state.request?.latitude || -23.55052;
+  const longitude = state.request?.longitude || -46.633308;
+  currentLocationMap = L.map(container, { zoomControl: true }).setView(
+    [latitude, longitude],
+    state.request?.latitude ? 17 : 11,
+  );
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: "&copy; OpenStreetMap",
+  }).addTo(currentLocationMap);
+  if (state.request?.latitude)
+    showCurrentPositionOnMap(latitude, longitude, state.request.accuracy || 0);
+  setTimeout(() => currentLocationMap?.invalidateSize(), 50);
+}
+function showCurrentPositionOnMap(latitude, longitude, accuracy = 0) {
+  if (!currentLocationMap || typeof L === "undefined") return;
+  const position = [latitude, longitude];
+  if (currentLocationMarker) currentLocationMarker.setLatLng(position);
+  else
+    currentLocationMarker = L.marker(position, {
+      title: "Sua localização atual",
+      alt: "Sua localização atual",
+    })
+      .addTo(currentLocationMap)
+      .bindPopup("Você está aqui");
+  if (currentAccuracyCircle) currentAccuracyCircle.remove();
+  if (accuracy)
+    currentAccuracyCircle = L.circle(position, {
+      radius: accuracy,
+      color: "#0b5cab",
+      fillColor: "#4da3ff",
+      fillOpacity: 0.15,
+      weight: 2,
+    }).addTo(currentLocationMap);
+  currentLocationMap.setView(position, 17);
+  currentLocationMarker.openPopup();
 }
 function locateCurrentPosition(showError = true) {
   const input = document.querySelector("#origin");
@@ -172,6 +217,7 @@ function locateCurrentPosition(showError = true) {
           ? `Localização encontrada • precisão aproximada de ${accuracy} m`
           : "Localização encontrada";
       locationRequestInProgress = false;
+      showCurrentPositionOnMap(latitude, longitude, accuracy);
       toast("Localização atual encontrada!");
     },
     (error) => {
@@ -330,8 +376,11 @@ function render() {
       );
   }
   bind();
-  if (state.screen === "request" && !state.request?.latitude)
-    setTimeout(() => locateCurrentPosition(false), 250);
+  if (state.screen === "request") {
+    initCurrentLocationMap();
+    if (!state.request?.latitude)
+      setTimeout(() => locateCurrentPosition(false), 250);
+  }
 }
 function toast(msg) {
   const e = document.createElement("div");

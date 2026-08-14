@@ -38,6 +38,18 @@ let currentLocationMap = null;
 let currentLocationMarker = null;
 let currentAccuracyCircle = null;
 let deferredInstallPrompt = null;
+const SUPABASE_URL = "https://egluwpbprxdrhypgdfsm.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_cZtLzhKNKXzUkRqS8XRyMg_QLmvCJFP";
+const supabaseClient = window.supabase?.createClient(
+  SUPABASE_URL,
+  SUPABASE_PUBLISHABLE_KEY,
+);
+let currentAuthUser = null;
+let realtimeChannel = null;
+let driverLocationWatchId = null;
+let trackingMap = null;
+let trackingClientMarker = null;
+let trackingDriverMarker = null;
 const problems = [
   ["pane", "Pneu furado"],
   ["motor", "Pane mecânica"],
@@ -140,7 +152,7 @@ function payments() {
   return `${header("Pagamentos", true)}<main class="content"><h1 class="section-title">Formas de pagamento</h1><p class="subtitle">Escolha como pagar os atendimentos.</p>${securityNotice()}<section class="card"><button class="payment-choice selected" data-payment="pix"><b>◆</b><span>Pix<small>QR Code ou copia e cola</small></span><strong>›</strong></button><button class="payment-choice" data-payment="card"><b>▣</b><span>Cartão<small>Crédito ou débito tokenizado</small></span><strong>›</strong></button></section><div id="payment-form"></div></main>`;
 }
 function signup() {
-  return `${header("Criar conta", true)}<main class="content"><h1 class="section-title">Vamos começar</h1><p class="subtitle">Crie sua conta de cliente.</p><form id="signup"><label class="field"><span>Nome completo</span><input name="name" required minlength="3" placeholder="Seu nome" /></label><label class="field"><span>Celular</span><input name="phone" required inputmode="tel" placeholder="(11) 99999-9999" /></label><label class="field"><span>E-mail</span><input name="email" required type="email" placeholder="voce@email.com" /></label><label class="field"><span>Senha</span><input name="password" required type="password" minlength="4" placeholder="Mínimo de 4 caracteres" /></label><label class="field"><span>Veículo (opcional)</span><input name="vehicle" placeholder="Ex.: Astra 2.0" /></label><button class="btn primary">CRIAR CONTA</button><button type="button" class="btn secondary login-link" data-go="clientLogin">JÁ TENHO CADASTRO</button></form></main>`;
+  return `${header("Criar conta", true)}<main class="content"><h1 class="section-title">Vamos começar</h1><p class="subtitle">Crie sua conta de cliente.</p><form id="signup"><label class="field"><span>Nome completo</span><input name="name" required minlength="3" placeholder="Seu nome" /></label><label class="field"><span>Celular</span><input name="phone" required inputmode="tel" placeholder="(11) 99999-9999" /></label><label class="field"><span>E-mail</span><input name="email" required type="email" placeholder="voce@email.com" /></label><label class="field"><span>Senha</span><input name="password" required type="password" minlength="6" placeholder="Mínimo de 6 caracteres" /></label><label class="field"><span>Veículo (opcional)</span><input name="vehicle" placeholder="Ex.: Astra 2.0" /></label><button class="btn primary">CRIAR CONTA</button><button type="button" class="btn secondary login-link" data-go="clientLogin">JÁ TENHO CADASTRO</button></form></main>`;
 }
 function clientLogin() {
   return `${header("Entrar como cliente", true)}<main class="content"><h1 class="section-title">Bem-vindo de volta</h1><p class="subtitle">Entre com o e-mail e a senha cadastrados.</p><form id="client-login"><label class="field"><span>E-mail</span><input name="email" required type="email" placeholder="voce@email.com" /></label><label class="field"><span>Senha</span><input name="password" required type="password" placeholder="Sua senha" /></label><button class="btn primary">ENTRAR</button><button type="button" class="btn secondary login-link" data-go="signup">CRIAR NOVA CONTA</button><p class="legal">Conta criada antes da versão 0.5? Use o celular cadastrado como senha.</p></form></main>`;
@@ -244,6 +256,146 @@ function locateCurrentPosition(showError = true) {
     { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 },
   );
 }
+
+function stopRealtime() {
+  if (realtimeChannel && supabaseClient)
+    supabaseClient.removeChannel(realtimeChannel);
+  realtimeChannel = null;
+}
+
+function distanceKm(aLat, aLng, bLat, bLng) {
+  const rad = (value) => (value * Math.PI) / 180;
+  const dLat = rad(bLat - aLat);
+  const dLng = rad(bLng - aLng);
+  const value =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(rad(aLat)) * Math.cos(rad(bLat)) * Math.sin(dLng / 2) ** 2;
+  return 6371 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
+}
+
+function initTrackingMap() {
+  const container = document.querySelector("#tracking-map");
+  if (!container || typeof L === "undefined") return;
+  const client = [state.request.latitude, state.request.longitude];
+  trackingMap = L.map(container).setView(client, 14);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: "&copy; OpenStreetMap",
+  }).addTo(trackingMap);
+  trackingClientMarker = L.marker(client).addTo(trackingMap).bindPopup("Você está aqui");
+  if (state.request.driverLatitude)
+    updateDriverOnTrackingMap(
+      state.request.driverLatitude,
+      state.request.driverLongitude,
+      state.request.locationUpdatedAt,
+    );
+  setTimeout(() => trackingMap?.invalidateSize(), 50);
+}
+
+function updateDriverOnTrackingMap(latitude, longitude, updatedAt) {
+  if (!trackingMap || !latitude || !longitude) return;
+  const point = [latitude, longitude];
+  if (trackingDriverMarker) trackingDriverMarker.setLatLng(point);
+  else
+    trackingDriverMarker = L.marker(point, {
+      title: "Guincheiro",
+      icon: L.divIcon({ className: "tow-live-icon", html: "🚛", iconSize: [42, 42] }),
+    }).addTo(trackingMap).bindPopup("Guincheiro a caminho");
+  const client = [state.request.latitude, state.request.longitude];
+  trackingMap.fitBounds([client, point], { padding: [42, 42], maxZoom: 16 });
+  const km = distanceKm(client[0], client[1], latitude, longitude);
+  const distance = document.querySelector("#tracking-distance");
+  const eta = document.querySelector("#tracking-eta");
+  const update = document.querySelector("#tracking-update");
+  if (distance) distance.textContent = km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;
+  if (eta) eta.textContent = `${Math.max(2, Math.round((km / 30) * 60))} min`;
+  if (update)
+    update.textContent = `Atualizado ${updatedAt ? new Date(updatedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "agora"}`;
+}
+
+function watchClientRequest(requestId) {
+  if (!supabaseClient || !requestId) return;
+  stopRealtime();
+  realtimeChannel = supabaseClient
+    .channel(`chamado-cliente-${requestId}`)
+    .on(
+      "postgres_changes",
+      { event: "UPDATE", schema: "public", table: "chamados", filter: `id=eq.${requestId}` },
+      ({ new: job }) => {
+        state.request.driverLatitude = job.guincheiro_latitude;
+        state.request.driverLongitude = job.guincheiro_longitude;
+        state.request.locationUpdatedAt = job.localizacao_atualizada_em;
+        if (job.status === "aceito" && state.screen === "searching") {
+          go("tracking");
+          toast("Um guincheiro aceitou seu chamado!");
+        } else if (state.screen === "tracking") {
+          updateDriverOnTrackingMap(
+            job.guincheiro_latitude,
+            job.guincheiro_longitude,
+            job.localizacao_atualizada_em,
+          );
+        }
+      },
+    )
+    .subscribe();
+}
+
+async function loadAvailableRequest() {
+  if (!supabaseClient || !state.providerOnline || state.screen !== "providerDashboard") return;
+  const { data, error } = await supabaseClient
+    .from("chamados")
+    .select("*")
+    .eq("status", "procurando")
+    .order("criado_em", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (error) return toast("Não foi possível buscar chamados.");
+  const changed = data?.id !== state.availableRequest?.id;
+  state.availableRequest = data || null;
+  if (changed) render();
+}
+
+function watchAvailableRequests() {
+  if (!supabaseClient || !state.providerOnline) return;
+  stopRealtime();
+  realtimeChannel = supabaseClient
+    .channel("chamados-disponiveis")
+    .on("postgres_changes", { event: "*", schema: "public", table: "chamados" }, loadAvailableRequest)
+    .subscribe();
+  loadAvailableRequest();
+}
+
+function initProviderLiveMap() {
+  const container = document.querySelector("#provider-live-map");
+  const job = state.providerJob;
+  if (!container || !job || typeof L === "undefined") return;
+  const clientPoint = [job.cliente_latitude, job.cliente_longitude];
+  const map = L.map(container).setView(clientPoint, 14);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: "&copy; OpenStreetMap",
+  }).addTo(map);
+  L.marker(clientPoint).addTo(map).bindPopup("Cliente");
+  let driverMarker = null;
+  if (navigator.geolocation) {
+    driverLocationWatchId = navigator.geolocation.watchPosition(
+      async ({ coords }) => {
+        const point = [coords.latitude, coords.longitude];
+        if (driverMarker) driverMarker.setLatLng(point);
+        else driverMarker = L.marker(point).addTo(map).bindPopup("Você");
+        map.fitBounds([clientPoint, point], { padding: [42, 42], maxZoom: 16 });
+        await supabaseClient.from("chamados").update({
+          guincheiro_latitude: coords.latitude,
+          guincheiro_longitude: coords.longitude,
+          localizacao_atualizada_em: new Date().toISOString(),
+        }).eq("id", job.id);
+      },
+      () => toast("Ative o GPS para compartilhar sua posição."),
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
+    );
+  }
+  setTimeout(() => map.invalidateSize(), 50);
+}
 function problem() {
   return `${header("Detalhes", true)}<main class="content"><h1 class="section-title">O que aconteceu?</h1><p class="subtitle">Selecione a opção que melhor descreve o problema.</p><div class="grid">${problems.map(([id, label]) => `<button class="choice ${state.request.problem === id ? "selected" : ""}" data-problem="${id}"><b>${icons[id]}</b>${label}</button>`).join("")}</div><h2 class="section-title" style="margin-top:22px">Qual é o veículo?</h2><div class="grid">${vehicles.map(([id, icon, label]) => `<button class="choice ${state.request.vehicle === id ? "selected" : ""}" data-vehicle="${id}"><b>${icon}</b>${label}</button>`).join("")}</div><button class="btn primary" id="to-quote" style="margin-top:18px">VER ESTIMATIVA</button></main>`;
 }
@@ -262,7 +414,7 @@ function searching() {
   return `${header("Buscando guincho", true)}<main class="content"><section class="status"><div class="pulse">🚛</div><h1 class="section-title">Procurando parceiros próximos…</h1><p class="subtitle">Isso normalmente leva poucos segundos.</p><div class="progress"><span id="search-progress" style="width:15%"></span></div></section><button class="btn danger" id="cancel">CANCELAR SOLICITAÇÃO</button></main>`;
 }
 function tracking() {
-  return `${header("Guincho a caminho", true)}<main class="content"><div class="map"><div class="route"></div><div class="pin you"><span>●</span></div><div class="pin tow"><span>🚛</span></div></div><section class="card"><div class="driver"><div class="avatar">JS</div><div class="driver-info"><strong>João Silva</strong><span class="muted">★ 4,9 • 327 atendimentos</span></div><span class="badge">VERIFICADO</span></div><div class="summary-row"><span>Guincho plataforma</span><b>ABC1D23</b></div><div class="summary-row"><span>Previsão de chegada</span><b>12 min</b></div></section><button class="btn primary" id="arrived">SIMULAR CHEGADA</button><button class="btn secondary" id="call" style="margin-top:10px">LIGAR PARA O MOTORISTA</button></main>`;
+  return `${header("Guincho a caminho", true)}<main class="content"><div id="tracking-map" class="real-map tracking-real-map" role="application" aria-label="Localização do guincheiro em tempo real"></div><section class="card"><div class="driver"><div class="avatar">🚛</div><div class="driver-info"><strong>Guincheiro a caminho</strong><span class="muted" id="tracking-update">Aguardando localização do guincheiro…</span></div><span class="badge">AO VIVO</span></div><div class="summary-row"><span>Distância aproximada</span><b id="tracking-distance">Calculando…</b></div><div class="summary-row"><span>Previsão de chegada</span><b id="tracking-eta">Calculando…</b></div></section><section class="security-note"><b>📍 Localização protegida</b><span>O compartilhamento termina quando o atendimento for finalizado.</span></section><button class="btn secondary" id="call" style="margin-top:10px">LIGAR PARA O MOTORISTA</button></main>`;
 }
 function service() {
   const step = state.request.step || 0;
@@ -293,15 +445,16 @@ function providerNav(active = "dashboard") {
   return `<nav class="bottom-nav"><button class="nav-item ${active === "dashboard" ? "active" : ""}" data-go="providerDashboard"><b>⌂</b>Início</button><button class="nav-item ${active === "jobs" ? "active" : ""}" data-go="providerJobs"><b>☷</b>Corridas</button><button class="nav-item ${active === "earnings" ? "active" : ""}" data-go="providerEarnings"><b>R$</b>Ganhos</button><button class="nav-item ${active === "account" ? "active" : ""}" data-go="providerAccount"><b>♙</b>Perfil</button></nav>`;
 }
 function providerSignup() {
-  return `${header("Cadastro do guincheiro", true)}<main class="content"><h1 class="section-title">Trabalhe com o GuincheJá</h1><p class="subtitle">Cadastre o responsável e o guincho.</p><form id="provider-signup"><label class="field"><span>Nome completo</span><input name="name" required minlength="3" placeholder="Nome do responsável"></label><label class="field"><span>Celular</span><input name="phone" required inputmode="tel" placeholder="(11) 99999-9999"></label><label class="field"><span>CPF ou CNPJ</span><input name="document" required placeholder="Documento"></label><label class="field"><span>Senha</span><input name="password" required type="password" minlength="4" placeholder="Mínimo de 4 caracteres"></label><label class="field"><span>Tipo de guincho</span><select name="towType" required><option value="">Selecione</option><option>Guincho plataforma</option><option>Guincho lança</option><option>Guincho para motos</option></select></label><label class="field"><span>Placa</span><input name="plate" required maxlength="7" placeholder="ABC1D23"></label><button class="btn primary">CRIAR PERFIL DE GUINCHEIRO</button><button type="button" class="btn secondary login-link" data-go="providerLogin">JÁ TENHO CADASTRO</button><p class="legal">Cadastro demonstrativo. Na versão comercial, os documentos passarão por verificação.</p></form></main>`;
+  return `${header("Cadastro do guincheiro", true)}<main class="content"><h1 class="section-title">Trabalhe com o GuincheJá</h1><p class="subtitle">Cadastre o responsável e o guincho.</p><form id="provider-signup"><label class="field"><span>Nome completo</span><input name="name" required minlength="3" placeholder="Nome do responsável"></label><label class="field"><span>Celular</span><input name="phone" required inputmode="tel" placeholder="(11) 99999-9999"></label><label class="field"><span>E-mail</span><input name="email" required type="email" placeholder="voce@email.com"></label><label class="field"><span>CPF ou CNPJ</span><input name="document" required placeholder="Documento"></label><label class="field"><span>Senha</span><input name="password" required type="password" minlength="6" placeholder="Mínimo de 6 caracteres"></label><label class="field"><span>Tipo de guincho</span><select name="towType" required><option value="">Selecione</option><option>Guincho plataforma</option><option>Guincho lança</option><option>Guincho para motos</option></select></label><label class="field"><span>Placa</span><input name="plate" required maxlength="7" placeholder="ABC1D23"></label><button class="btn primary">CRIAR PERFIL DE GUINCHEIRO</button><button type="button" class="btn secondary login-link" data-go="providerLogin">JÁ TENHO CADASTRO</button><p class="legal">A localização será compartilhada somente durante um chamado aceito.</p></form></main>`;
 }
 function providerLogin() {
-  return `${header("Entrar como guincheiro", true)}<main class="content"><h1 class="section-title">Acesse seu painel</h1><p class="subtitle">Entre com o celular e a senha cadastrados.</p><form id="provider-login"><label class="field"><span>Celular</span><input name="phone" required inputmode="tel" placeholder="(11) 99999-9999"></label><label class="field"><span>Senha</span><input name="password" required type="password" placeholder="Sua senha"></label><button class="btn primary">ENTRAR</button><button type="button" class="btn secondary login-link" data-go="providerSignup">CRIAR NOVO CADASTRO</button><p class="legal">Cadastro antigo? Use o celular cadastrado como senha.</p></form></main>`;
+  return `${header("Entrar como guincheiro", true)}<main class="content"><h1 class="section-title">Acesse seu painel</h1><p class="subtitle">Entre com o e-mail e a senha cadastrados.</p><form id="provider-login"><label class="field"><span>E-mail</span><input name="email" required type="email" placeholder="voce@email.com"></label><label class="field"><span>Senha</span><input name="password" required type="password" placeholder="Sua senha"></label><button class="btn primary">ENTRAR</button><button type="button" class="btn secondary login-link" data-go="providerSignup">CRIAR NOVO CADASTRO</button></form></main>`;
 }
 function providerDashboard() {
   if (!state.providerLoggedIn)
     return state.provider ? providerLogin() : providerSignup();
-  return `${header("Painel do guincheiro", true)}<main class="content"><section class="provider-status ${state.providerOnline ? "online" : ""}"><div><strong><span class="status-dot"></span>${state.providerOnline ? "Você está online" : "Você está offline"}</strong><small>${state.providerOnline ? "Recebendo solicitações próximas" : "Ative para começar a receber chamados"}</small></div><button id="toggle-online">${state.providerOnline ? "FICAR OFFLINE" : "FICAR ONLINE"}</button></section><h2 class="section-title">Resumo de hoje</h2><div class="metrics"><div class="metric"><b>3</b><span>Corridas</span></div><div class="metric"><b>R$ 427</b><span>Ganhos</span></div><div class="metric"><b>4,9 ★</b><span>Avaliação</span></div></div>${state.providerOnline ? `<section class="card incoming"><div class="eyebrow" style="color:var(--navy2)">NOVA SOLICITAÇÃO</div><h2>Pane mecânica</h2><p>🚗 Carro • 4,2 km</p><div class="summary-row"><span>Coleta</span><b>Av. Paulista, 1000</b></div><div class="summary-row"><span>Destino</span><b>Rua Vergueiro, 850</b></div><div class="summary-row"><span>Valor</span><strong class="price" style="font-size:23px">R$ 149,90</strong></div><div class="grid"><button class="btn danger" id="provider-decline">RECUSAR</button><button class="btn primary" id="provider-accept">ACEITAR</button></div></section>` : `<section class="empty"><b>🚛</b><h2>Pronto para trabalhar?</h2><p class="muted">Fique online para receber uma solicitação.</p></section>`}</main>${providerNav("dashboard")}`;
+  const job = state.availableRequest;
+  return `${header("Painel do guincheiro", true)}<main class="content"><section class="provider-status ${state.providerOnline ? "online" : ""}"><div><strong><span class="status-dot"></span>${state.providerOnline ? "Você está online" : "Você está offline"}</strong><small>${state.providerOnline ? "Recebendo solicitações próximas" : "Ative para começar a receber chamados"}</small></div><button id="toggle-online">${state.providerOnline ? "FICAR OFFLINE" : "FICAR ONLINE"}</button></section><h2 class="section-title">Chamados disponíveis</h2>${state.providerOnline && job ? `<section class="card incoming"><div class="eyebrow" style="color:var(--navy2)">NOVA SOLICITAÇÃO</div><h2>${job.problema || "Solicitação de guincho"}</h2><p>${job.veiculo || "Veículo"} • ${job.area || "São Paulo"}</p><div class="summary-row"><span>Coleta</span><b>${job.origem || "Localização do cliente"}</b></div><div class="summary-row"><span>Destino</span><b>${job.destino || "Não informado"}</b></div><div class="summary-row"><span>Valor estimado</span><strong class="price" style="font-size:23px">${money(Number(job.preco || 0))}</strong></div><div class="grid"><button class="btn danger" id="provider-decline">RECUSAR</button><button class="btn primary" id="provider-accept">ACEITAR</button></div></section>` : `<section class="empty"><b>🚛</b><h2>${state.providerOnline ? "Aguardando chamado…" : "Pronto para trabalhar?"}</h2><p class="muted">${state.providerOnline ? "Novos pedidos aparecerão automaticamente." : "Fique online para receber uma solicitação."}</p></section>`}</main>${providerNav("dashboard")}`;
 }
 function providerTrip() {
   const step = state.providerJob?.step || 0;
@@ -319,7 +472,7 @@ function providerTrip() {
     "CHEGUEI AO DESTINO",
     "FINALIZAR CORRIDA",
   ][step];
-  return `${header("Corrida atual", true)}<main class="content"><div class="map"><div class="route"></div><div class="pin you"><span>🚗</span></div><div class="pin tow"><span>🚛</span></div></div><section class="card"><div class="driver"><div class="avatar">CM</div><div class="driver-info"><strong>Carlos Martins</strong><span class="muted">Cliente • ★ 4,8</span></div><button class="icon-btn provider-call" id="provider-call">☎</button></div></section><section class="card"><div class="timeline">${labels.map((x, i) => `<div class="step ${i < step ? "done" : i === step ? "active" : ""}">${x}</div>`).join("")}</div></section><button class="btn primary" id="provider-next">${action}</button></main>${providerNav("jobs")}`;
+  return `${header("Corrida atual", true)}<main class="content"><div id="provider-live-map" class="real-map tracking-real-map" role="application" aria-label="Mapa da corrida atual"></div><section class="security-note"><b>📡 GPS sendo compartilhado</b><span>Sua posição é enviada somente ao cliente deste chamado.</span></section><section class="card"><div class="timeline">${labels.map((x, i) => `<div class="step ${i < step ? "done" : i === step ? "active" : ""}">${x}</div>`).join("")}</div></section><button class="btn primary" id="provider-next">${action}</button></main>${providerNav("jobs")}`;
 }
 function providerDone() {
   return `${header("Corrida finalizada", true)}<main class="content"><section class="status"><div class="pulse">✓</div><h1 class="section-title">Serviço concluído!</h1><p class="subtitle">Pagamento registrado via Pix.</p></section><section class="card"><div class="summary-row"><span>Valor recebido</span><strong class="price" style="font-size:26px">R$ 149,90</strong></div><div class="summary-row"><span>Avaliação</span><strong>5,0 ★</strong></div><div class="summary-row"><span>Corrida</span><strong>#GJ1048</strong></div></section><button class="btn primary" id="provider-complete">VOLTAR AO PAINEL</button></main>`;
@@ -340,6 +493,10 @@ function providerPayout() {
   return `${header("Recebimentos", true)}<main class="content"><h1 class="section-title">Receber seus ganhos</h1><p class="subtitle">A titularidade deverá corresponder ao cadastro aprovado.</p>${securityNotice()}<form id="payout-form"><label class="field"><span>Tipo de chave Pix</span><select name="type"><option>CPF/CNPJ</option><option>Celular</option><option>E-mail</option><option>Chave aleatória</option></select></label><label class="field"><span>Chave Pix</span><input name="pix" required placeholder="Informe somente para demonstração"></label><button class="btn primary">SALVAR CHAVE PIX</button></form></main>`;
 }
 function render() {
+  if (driverLocationWatchId !== null) {
+    navigator.geolocation.clearWatch(driverLocationWatchId);
+    driverLocationWatchId = null;
+  }
   const views = {
     home,
     coverage,
@@ -390,6 +547,10 @@ function render() {
     if (!state.request?.latitude)
       setTimeout(() => locateCurrentPosition(false), 250);
   }
+  if (state.screen === "tracking") initTrackingMap();
+  if (state.screen === "providerDashboard" && state.providerOnline)
+    watchAvailableRequests();
+  if (state.screen === "providerTrip") initProviderLiveMap();
 }
 function toast(msg) {
   const e = document.createElement("div");
@@ -420,9 +581,30 @@ function bind() {
     };
   const form = document.querySelector("#signup");
   if (form)
-    form.onsubmit = (e) => {
+    form.onsubmit = async (e) => {
       e.preventDefault();
-      state.user = Object.fromEntries(new FormData(form));
+      const data = Object.fromEntries(new FormData(form));
+      const { data: authData, error } = await supabaseClient.auth.signUp({
+        email: data.email,
+        password: data.password,
+        options: { data: { role: "cliente", name: data.name } },
+      });
+      if (error) return toast(error.message);
+      const safeData = { ...data };
+      delete safeData.password;
+      localStorage.setItem("gj_pending_client", JSON.stringify(safeData));
+      if (!authData.session)
+        return toast("Confirme o e-mail e depois entre na sua conta.");
+      currentAuthUser = authData.user;
+      delete data.password;
+      const { error: profileError } = await supabaseClient.from("perfis").insert({
+        id: currentAuthUser.id,
+        nome: data.name,
+        celular: data.phone,
+        tipo: "cliente",
+      });
+      if (profileError) return toast("Conta criada, mas o perfil não foi salvo.");
+      state.user = data;
       state.clientAccount = state.user;
       state.clientLoggedIn = true;
       state.lastRole = "client";
@@ -432,7 +614,9 @@ function bind() {
     };
   const logout = document.querySelector("#logout");
   if (logout)
-    logout.onclick = () => {
+    logout.onclick = async () => {
+      await supabaseClient.auth.signOut();
+      currentAuthUser = null;
       state.user = null;
       state.clientLoggedIn = false;
       save();
@@ -440,21 +624,30 @@ function bind() {
     };
   const clientLoginForm = document.querySelector("#client-login");
   if (clientLoginForm)
-    clientLoginForm.onsubmit = (e) => {
+    clientLoginForm.onsubmit = async (e) => {
       e.preventDefault();
       const data = Object.fromEntries(new FormData(clientLoginForm));
-      const account = state.clientAccount;
-      const validPassword = account?.password
-        ? data.password === account.password
-        : data.password.replace(/\D/g, "") ===
-          account?.phone?.replace(/\D/g, "");
-      if (
-        !account ||
-        data.email.toLowerCase() !== account.email.toLowerCase() ||
-        !validPassword
-      )
-        return toast("E-mail ou senha incorretos.");
-      state.user = account;
+      const { data: authData, error } = await supabaseClient.auth.signInWithPassword(data);
+      if (error) return toast("E-mail ou senha incorretos.");
+      currentAuthUser = authData.user;
+      let { data: profile } = await supabaseClient.from("perfis").select("*").eq("id", currentAuthUser.id).maybeSingle();
+      if (!profile) {
+        const pending = readSaved("gj_pending_client", {});
+        const candidate = {
+          id: currentAuthUser.id,
+          nome: pending.name || currentAuthUser.user_metadata?.name || "Cliente",
+          celular: pending.phone || null,
+          tipo: "cliente",
+        };
+        const { data: created } = await supabaseClient.from("perfis").insert(candidate).select().single();
+        profile = created;
+      }
+      if (!profile || profile.tipo !== "cliente") {
+        await supabaseClient.auth.signOut();
+        return toast("Esta conta não é de cliente.");
+      }
+      state.user = { name: profile.nome, phone: profile.celular, email: data.email };
+      state.clientAccount = state.user;
       state.clientLoggedIn = true;
       state.lastRole = "client";
       save();
@@ -505,22 +698,42 @@ function bind() {
         : toast("Selecione o problema e o veículo.");
   const confirm = document.querySelector("#confirm");
   if (confirm)
-    confirm.onclick = () => {
+    confirm.onclick = async () => {
+      if (!currentAuthUser) {
+        toast("Entre novamente para solicitar o guincho.");
+        return go("clientLogin");
+      }
+      if (!state.request.latitude || !state.request.longitude) {
+        toast("Ative o GPS e confirme sua localização antes de solicitar.");
+        return go("request");
+      }
+      const { data: job, error } = await supabaseClient
+        .from("chamados")
+        .insert({
+          cliente_id: currentAuthUser.id,
+          status: "procurando",
+          cliente_latitude: state.request.latitude,
+          cliente_longitude: state.request.longitude,
+          origem: state.request.origin,
+          destino: state.request.destination,
+          area: state.request.area,
+          problema: problems.find((x) => x[0] === state.request.problem)?.[1],
+          veiculo: vehicles.find((x) => x[0] === state.request.vehicle)?.[2],
+          preco: state.request.price,
+        })
+        .select()
+        .single();
+      if (error) return toast("Não foi possível enviar o chamado.");
+      state.request.id = job.id;
       go("searching");
-      let n = 15;
-      const t = setInterval(() => {
-        n += 17;
-        const p = document.querySelector("#search-progress");
-        if (p) p.style.width = Math.min(n, 100) + "%";
-        if (n >= 100) {
-          clearInterval(t);
-          if (state.screen === "searching") go("tracking");
-        }
-      }, 450);
+      watchClientRequest(job.id);
     };
   const cancel = document.querySelector("#cancel");
   if (cancel)
-    cancel.onclick = () => {
+    cancel.onclick = async () => {
+      if (state.request?.id)
+        await supabaseClient.from("chamados").update({ status: "cancelado" }).eq("id", state.request.id);
+      stopRealtime();
       state.request = null;
       go("home");
       toast("Solicitação cancelada.");
@@ -617,9 +830,32 @@ function bind() {
     };
   const providerForm = document.querySelector("#provider-signup");
   if (providerForm)
-    providerForm.onsubmit = (e) => {
+    providerForm.onsubmit = async (e) => {
       e.preventDefault();
-      state.provider = Object.fromEntries(new FormData(providerForm));
+      const data = Object.fromEntries(new FormData(providerForm));
+      const { data: authData, error } = await supabaseClient.auth.signUp({
+        email: data.email,
+        password: data.password,
+        options: { data: { role: "guincheiro", name: data.name } },
+      });
+      if (error) return toast(error.message);
+      const safeData = { ...data };
+      delete safeData.password;
+      localStorage.setItem("gj_pending_provider", JSON.stringify(safeData));
+      if (!authData.session)
+        return toast("Confirme o e-mail e depois entre na sua conta.");
+      currentAuthUser = authData.user;
+      delete data.password;
+      const { error: profileError } = await supabaseClient.from("perfis").insert({
+        id: currentAuthUser.id,
+        nome: data.name,
+        celular: data.phone,
+        tipo: "guincheiro",
+        tipo_guincho: data.towType,
+        placa: data.plate.toUpperCase(),
+      });
+      if (profileError) return toast("Conta criada, mas o perfil não foi salvo.");
+      state.provider = data;
       state.providerLoggedIn = true;
       state.lastRole = "provider";
       if (!save()) return toast("Não foi possível salvar o cadastro.");
@@ -628,18 +864,37 @@ function bind() {
     };
   const providerLoginForm = document.querySelector("#provider-login");
   if (providerLoginForm)
-    providerLoginForm.onsubmit = (e) => {
+    providerLoginForm.onsubmit = async (e) => {
       e.preventDefault();
       const data = Object.fromEntries(new FormData(providerLoginForm));
-      const account = state.provider;
-      const samePhone =
-        data.phone.replace(/\D/g, "") === account?.phone?.replace(/\D/g, "");
-      const validPassword = account?.password
-        ? data.password === account.password
-        : data.password.replace(/\D/g, "") ===
-          account?.phone?.replace(/\D/g, "");
-      if (!account || !samePhone || !validPassword)
-        return toast("Celular ou senha incorretos.");
+      const { data: authData, error } = await supabaseClient.auth.signInWithPassword(data);
+      if (error) return toast("E-mail ou senha incorretos.");
+      currentAuthUser = authData.user;
+      let { data: profile } = await supabaseClient.from("perfis").select("*").eq("id", currentAuthUser.id).maybeSingle();
+      if (!profile) {
+        const pending = readSaved("gj_pending_provider", {});
+        const candidate = {
+          id: currentAuthUser.id,
+          nome: pending.name || currentAuthUser.user_metadata?.name || "Guincheiro",
+          celular: pending.phone || null,
+          tipo: "guincheiro",
+          tipo_guincho: pending.towType || null,
+          placa: pending.plate?.toUpperCase() || null,
+        };
+        const { data: created } = await supabaseClient.from("perfis").insert(candidate).select().single();
+        profile = created;
+      }
+      if (!profile || profile.tipo !== "guincheiro") {
+        await supabaseClient.auth.signOut();
+        return toast("Esta conta não é de guincheiro.");
+      }
+      state.provider = {
+        name: profile.nome,
+        phone: profile.celular,
+        email: data.email,
+        towType: profile.tipo_guincho,
+        plate: profile.placa,
+      };
       state.providerLoggedIn = true;
       state.lastRole = "provider";
       save();
@@ -649,7 +904,15 @@ function bind() {
   const online = document.querySelector("#toggle-online");
   if (online)
     online.onclick = () => {
+      if (!currentAuthUser) {
+        toast("Entre novamente para ficar online.");
+        return go("providerLogin");
+      }
       state.providerOnline = !state.providerOnline;
+      if (!state.providerOnline) {
+        state.availableRequest = null;
+        stopRealtime();
+      }
       render();
       toast(state.providerOnline ? "Você está online!" : "Você está offline.");
     };
@@ -662,8 +925,20 @@ function bind() {
     };
   const accept = document.querySelector("#provider-accept");
   if (accept)
-    accept.onclick = () => {
-      state.providerJob = { step: 0 };
+    accept.onclick = async () => {
+      const available = state.availableRequest;
+      if (!available || !currentAuthUser) return;
+      const { data: accepted, error } = await supabaseClient
+        .from("chamados")
+        .update({ guincheiro_id: currentAuthUser.id, status: "aceito" })
+        .eq("id", available.id)
+        .eq("status", "procurando")
+        .select()
+        .single();
+      if (error) return toast("Este chamado não está mais disponível.");
+      stopRealtime();
+      state.providerJob = { ...accepted, step: 0 };
+      state.availableRequest = null;
       go("providerTrip");
     };
   const providerCall = document.querySelector("#provider-call");
@@ -671,11 +946,16 @@ function bind() {
     providerCall.onclick = () => toast("Ligação simulada para o cliente.");
   const providerNext = document.querySelector("#provider-next");
   if (providerNext)
-    providerNext.onclick = () => {
+    providerNext.onclick = async () => {
       if (state.providerJob.step < 4) {
         state.providerJob.step++;
+        const statuses = ["aceito", "chegou", "carregando", "em_transporte", "finalizado"];
+        await supabaseClient.from("chamados").update({ status: statuses[state.providerJob.step] }).eq("id", state.providerJob.id);
         render();
-      } else go("providerDone");
+      } else {
+        await supabaseClient.from("chamados").update({ status: "finalizado" }).eq("id", state.providerJob.id);
+        go("providerDone");
+      }
     };
   const providerComplete = document.querySelector("#provider-complete");
   if (providerComplete)
@@ -687,7 +967,10 @@ function bind() {
     };
   const providerLogout = document.querySelector("#provider-logout");
   if (providerLogout)
-    providerLogout.onclick = () => {
+    providerLogout.onclick = async () => {
+      await supabaseClient.auth.signOut();
+      currentAuthUser = null;
+      stopRealtime();
       state.providerOnline = false;
       state.providerLoggedIn = false;
       state.lastRole = "client";
@@ -786,8 +1069,41 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") save();
 });
 window.addEventListener("pagehide", save);
-render();
-setTimeout(
-  () => document.querySelector("#splash")?.classList.add("hide"),
-  1600,
-);
+
+async function bootstrap() {
+  if (supabaseClient) {
+    const { data } = await supabaseClient.auth.getSession();
+    currentAuthUser = data.session?.user || null;
+    if (currentAuthUser) {
+      const { data: profile } = await supabaseClient
+        .from("perfis")
+        .select("*")
+        .eq("id", currentAuthUser.id)
+        .maybeSingle();
+      if (profile?.tipo === "cliente") {
+        state.user = {
+          name: profile.nome,
+          phone: profile.celular,
+          email: currentAuthUser.email,
+        };
+        state.clientAccount = state.user;
+        state.clientLoggedIn = true;
+      } else if (profile?.tipo === "guincheiro") {
+        state.provider = {
+          name: profile.nome,
+          phone: profile.celular,
+          email: currentAuthUser.email,
+          towType: profile.tipo_guincho,
+          plate: profile.placa,
+        };
+        state.providerLoggedIn = true;
+      }
+    }
+  }
+  render();
+  setTimeout(
+    () => document.querySelector("#splash")?.classList.add("hide"),
+    1600,
+  );
+}
+bootstrap();

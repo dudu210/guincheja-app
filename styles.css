@@ -221,6 +221,19 @@ button {
   grid-column: 1 / -1;
   margin-top: 10px;
 }
+.tracking-real-map {
+  height: 340px;
+  margin-bottom: 14px;
+}
+.tow-live-icon {
+  background: white;
+  border: 3px solid var(--yellow);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 25px;
+  box-shadow: 0 5px 15px rgba(7, 27, 51, 0.3);
+}
 .section-title {
   font-size: 20px;
   margin: 0 0 5px;

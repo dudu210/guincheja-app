@@ -162,7 +162,7 @@ function clientLogin() {
 function emailVerification() {
   const pending = state.pendingVerification || readSaved("gj_pending_verification", {});
   const roleLabel = pending.role === "guincheiro" ? "guincheiro" : "cliente";
-  return `${header("Confirmar e-mail", true)}<main class="content"><section class="status"><div class="pulse">✉️</div><h1 class="section-title">Digite o código</h1><p class="subtitle">Enviamos um código de 6 dígitos para <b>${pending.email || "seu e-mail"}</b>.</p></section><form id="email-verification"><label class="field"><span>Código de confirmação</span><input name="token" required inputmode="numeric" autocomplete="one-time-code" minlength="6" maxlength="6" pattern="[0-9]{6}" placeholder="000000"></label><button class="btn primary">CONFIRMAR CADASTRO</button><button class="btn secondary login-link" type="button" id="resend-code">REENVIAR CÓDIGO</button><button class="btn ghost login-link" type="button" data-go="${roleLabel === "guincheiro" ? "providerLogin" : "clientLogin"}">VOLTAR AO LOGIN</button></form><p class="legal">O código tem prazo de validade e só pode ser usado uma vez.</p></main>`;
+  return `${header("Confirmar e-mail", true)}<main class="content"><section class="status"><div class="pulse">✉️</div><h1 class="section-title">Verifique seu e-mail</h1><p class="subtitle">Enviamos uma mensagem para <b>${pending.email || "seu e-mail"}</b>.</p></section><section class="card"><h2 class="section-title">Como confirmar</h2><div class="summary-row"><span>1. Abra a mensagem do Supabase</span><b>✉️</b></div><div class="summary-row"><span>2. Toque em “Confirm email address”</span><b>✓</b></div><div class="summary-row"><span>3. Você voltará ao GuincheJá</span><b>↩</b></div></section><details class="card otp-option"><summary>Recebi um código de 6 dígitos</summary><form id="email-verification"><label class="field"><span>Código de confirmação</span><input name="token" required inputmode="numeric" autocomplete="one-time-code" minlength="6" maxlength="6" pattern="[0-9]{6}" placeholder="000000"></label><button class="btn primary">CONFIRMAR CÓDIGO</button></form></details><button class="btn secondary" type="button" id="resend-code">REENVIAR E-MAIL</button><button class="btn ghost login-link" type="button" data-go="${roleLabel === "guincheiro" ? "providerLogin" : "clientLogin"}">VOLTAR AO LOGIN</button><p class="legal">O link de confirmação é individual e tem prazo de validade.</p></main>`;
 }
 
 function authMessage(error) {
@@ -654,7 +654,7 @@ function bind() {
       });
       if (error) {
         button.disabled = false;
-        button.textContent = "CONFIRMAR CADASTRO";
+        button.textContent = "CONFIRMAR CÓDIGO";
         return toast(authMessage(error));
       }
       try {
@@ -664,7 +664,7 @@ function bind() {
         toast("E-mail confirmado e conta criada!");
       } catch {
         button.disabled = false;
-        button.textContent = "CONFIRMAR CADASTRO";
+        button.textContent = "CONFIRMAR CÓDIGO";
         toast("E-mail confirmado, mas não foi possível salvar o perfil.");
       }
     };
@@ -1212,11 +1212,30 @@ async function bootstrap() {
     const { data } = await supabaseClient.auth.getSession();
     currentAuthUser = data.session?.user || null;
     if (currentAuthUser) {
-      const { data: profile } = await supabaseClient
+      let { data: profile } = await supabaseClient
         .from("perfis")
         .select("*")
         .eq("id", currentAuthUser.id)
         .maybeSingle();
+      const pending = state.pendingVerification || readSaved("gj_pending_verification");
+      if (!profile && pending?.role && pending?.email === currentAuthUser.email) {
+        try {
+          await createVerifiedProfile(
+            pending.role,
+            currentAuthUser,
+            currentAuthUser.email,
+          );
+          const result = await supabaseClient
+            .from("perfis")
+            .select("*")
+            .eq("id", currentAuthUser.id)
+            .maybeSingle();
+          profile = result.data;
+          state.screen = pending.role === "guincheiro" ? "providerDashboard" : "home";
+        } catch {
+          state.screen = pending.role === "guincheiro" ? "providerLogin" : "clientLogin";
+        }
+      }
       if (profile?.tipo === "cliente") {
         state.user = {
           name: profile.nome,

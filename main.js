@@ -31,6 +31,7 @@ const initialState = {
   request: null,
   rating: 0,
   history: JSON.parse(localStorage.getItem("gj_history") || "[]"),
+  pendingVerification: readSaved("gj_pending_verification"),
 };
 let state = { ...initialState };
 let locationRequestInProgress = false;
@@ -156,6 +157,61 @@ function signup() {
 }
 function clientLogin() {
   return `${header("Entrar como cliente", true)}<main class="content"><h1 class="section-title">Bem-vindo de volta</h1><p class="subtitle">Entre com o e-mail e a senha cadastrados.</p><form id="client-login"><label class="field"><span>E-mail</span><input name="email" required type="email" placeholder="voce@email.com" /></label><label class="field"><span>Senha</span><input name="password" required type="password" placeholder="Sua senha" /></label><button class="btn primary">ENTRAR</button><button type="button" class="btn secondary login-link" data-go="signup">CRIAR NOVA CONTA</button><p class="legal">Conta criada antes da versão 0.5? Use o celular cadastrado como senha.</p></form></main>`;
+}
+
+function emailVerification() {
+  const pending = state.pendingVerification || readSaved("gj_pending_verification", {});
+  const roleLabel = pending.role === "guincheiro" ? "guincheiro" : "cliente";
+  return `${header("Confirmar e-mail", true)}<main class="content"><section class="status"><div class="pulse">✉️</div><h1 class="section-title">Digite o código</h1><p class="subtitle">Enviamos um código de 6 dígitos para <b>${pending.email || "seu e-mail"}</b>.</p></section><form id="email-verification"><label class="field"><span>Código de confirmação</span><input name="token" required inputmode="numeric" autocomplete="one-time-code" minlength="6" maxlength="6" pattern="[0-9]{6}" placeholder="000000"></label><button class="btn primary">CONFIRMAR CADASTRO</button><button class="btn secondary login-link" type="button" id="resend-code">REENVIAR CÓDIGO</button><button class="btn ghost login-link" type="button" data-go="${roleLabel === "guincheiro" ? "providerLogin" : "clientLogin"}">VOLTAR AO LOGIN</button></form><p class="legal">O código tem prazo de validade e só pode ser usado uma vez.</p></main>`;
+}
+
+function authMessage(error) {
+  const text = String(error?.message || error || "").toLowerCase();
+  if (text.includes("email not confirmed")) return "Confirme o código enviado ao seu e-mail antes de entrar.";
+  if (text.includes("invalid login credentials")) return "E-mail ou senha incorretos.";
+  if (text.includes("user already registered")) return "Este e-mail já possui cadastro. Entre na conta ou confirme o código.";
+  if (text.includes("password")) return "A senha precisa ter pelo menos 6 caracteres.";
+  if (text.includes("rate limit")) return "Muitas tentativas. Aguarde um minuto e tente novamente.";
+  if (text.includes("token") || text.includes("otp")) return "Código incorreto ou vencido. Solicite um novo código.";
+  return "Não foi possível concluir. Verifique a internet e tente novamente.";
+}
+
+async function createVerifiedProfile(role, user, email) {
+  const key = role === "guincheiro" ? "gj_pending_provider" : "gj_pending_client";
+  const pending = readSaved(key, {});
+  const profile = {
+    id: user.id,
+    nome: pending.name || user.user_metadata?.name || (role === "guincheiro" ? "Guincheiro" : "Cliente"),
+    celular: pending.phone || null,
+    tipo: role,
+  };
+  if (role === "guincheiro") {
+    profile.tipo_guincho = pending.towType || null;
+    profile.placa = pending.plate?.toUpperCase() || null;
+  }
+  const { error } = await supabaseClient.from("perfis").upsert(profile);
+  if (error) throw error;
+  if (role === "guincheiro") {
+    state.provider = {
+      ...pending,
+      email,
+      name: profile.nome,
+      phone: profile.celular,
+      towType: profile.tipo_guincho,
+      plate: profile.placa,
+    };
+    state.providerLoggedIn = true;
+    state.lastRole = "provider";
+  } else {
+    state.user = { ...pending, email, name: profile.nome, phone: profile.celular };
+    state.clientAccount = state.user;
+    state.clientLoggedIn = true;
+    state.lastRole = "client";
+  }
+  localStorage.removeItem(key);
+  localStorage.removeItem("gj_pending_verification");
+  state.pendingVerification = null;
+  save();
 }
 function request() {
   if (!state.user) return state.clientAccount ? clientLogin() : signup();
@@ -505,6 +561,7 @@ function render() {
     payments,
     signup,
     clientLogin,
+    emailVerification,
     request,
     problem,
     quote,
@@ -579,6 +636,52 @@ function bind() {
       }
       toast("No Chrome, toque em ⋮ e depois em Instalar aplicativo.");
     };
+  const verificationForm = document.querySelector("#email-verification");
+  if (verificationForm)
+    verificationForm.onsubmit = async (event) => {
+      event.preventDefault();
+      const pending = state.pendingVerification || readSaved("gj_pending_verification", {});
+      const token = new FormData(verificationForm).get("token")?.trim();
+      if (!pending.email || !pending.role)
+        return toast("Volte ao cadastro e informe seus dados novamente.");
+      const button = verificationForm.querySelector("button[type='submit'], button:not([type])");
+      button.disabled = true;
+      button.textContent = "CONFIRMANDO…";
+      const { data, error } = await supabaseClient.auth.verifyOtp({
+        email: pending.email,
+        token,
+        type: "email",
+      });
+      if (error) {
+        button.disabled = false;
+        button.textContent = "CONFIRMAR CADASTRO";
+        return toast(authMessage(error));
+      }
+      try {
+        currentAuthUser = data.user;
+        await createVerifiedProfile(pending.role, data.user, pending.email);
+        go(pending.role === "guincheiro" ? "providerDashboard" : "home");
+        toast("E-mail confirmado e conta criada!");
+      } catch {
+        button.disabled = false;
+        button.textContent = "CONFIRMAR CADASTRO";
+        toast("E-mail confirmado, mas não foi possível salvar o perfil.");
+      }
+    };
+  const resendCode = document.querySelector("#resend-code");
+  if (resendCode)
+    resendCode.onclick = async () => {
+      const pending = state.pendingVerification || readSaved("gj_pending_verification", {});
+      if (!pending.email) return toast("Volte ao cadastro e informe seu e-mail.");
+      resendCode.disabled = true;
+      const { error } = await supabaseClient.auth.resend({
+        type: "signup",
+        email: pending.email,
+        options: { emailRedirectTo: `${window.location.origin}${window.location.pathname}` },
+      });
+      setTimeout(() => (resendCode.disabled = false), 60000);
+      toast(error ? authMessage(error) : "Novo código enviado. Verifique seu e-mail.");
+    };
   const form = document.querySelector("#signup");
   if (form)
     form.onsubmit = async (e) => {
@@ -587,14 +690,24 @@ function bind() {
       const { data: authData, error } = await supabaseClient.auth.signUp({
         email: data.email,
         password: data.password,
-        options: { data: { role: "cliente", name: data.name } },
+        options: {
+          data: { role: "cliente", name: data.name },
+          emailRedirectTo: `${window.location.origin}${window.location.pathname}`,
+        },
       });
-      if (error) return toast(error.message);
+      if (error) return toast(authMessage(error));
       const safeData = { ...data };
       delete safeData.password;
       localStorage.setItem("gj_pending_client", JSON.stringify(safeData));
-      if (!authData.session)
-        return toast("Confirme o e-mail e depois entre na sua conta.");
+      if (!authData.session) {
+        state.pendingVerification = { email: data.email, role: "cliente" };
+        localStorage.setItem(
+          "gj_pending_verification",
+          JSON.stringify(state.pendingVerification),
+        );
+        go("emailVerification");
+        return toast("Digite o código enviado ao seu e-mail.");
+      }
       currentAuthUser = authData.user;
       delete data.password;
       const { error: profileError } = await supabaseClient.from("perfis").insert({
@@ -628,7 +741,14 @@ function bind() {
       e.preventDefault();
       const data = Object.fromEntries(new FormData(clientLoginForm));
       const { data: authData, error } = await supabaseClient.auth.signInWithPassword(data);
-      if (error) return toast("E-mail ou senha incorretos.");
+      if (error) {
+        if (String(error.message).toLowerCase().includes("email not confirmed")) {
+          state.pendingVerification = { email: data.email, role: "cliente" };
+          localStorage.setItem("gj_pending_verification", JSON.stringify(state.pendingVerification));
+          go("emailVerification");
+        }
+        return toast(authMessage(error));
+      }
       currentAuthUser = authData.user;
       let { data: profile } = await supabaseClient.from("perfis").select("*").eq("id", currentAuthUser.id).maybeSingle();
       if (!profile) {
@@ -836,14 +956,24 @@ function bind() {
       const { data: authData, error } = await supabaseClient.auth.signUp({
         email: data.email,
         password: data.password,
-        options: { data: { role: "guincheiro", name: data.name } },
+        options: {
+          data: { role: "guincheiro", name: data.name },
+          emailRedirectTo: `${window.location.origin}${window.location.pathname}`,
+        },
       });
-      if (error) return toast(error.message);
+      if (error) return toast(authMessage(error));
       const safeData = { ...data };
       delete safeData.password;
       localStorage.setItem("gj_pending_provider", JSON.stringify(safeData));
-      if (!authData.session)
-        return toast("Confirme o e-mail e depois entre na sua conta.");
+      if (!authData.session) {
+        state.pendingVerification = { email: data.email, role: "guincheiro" };
+        localStorage.setItem(
+          "gj_pending_verification",
+          JSON.stringify(state.pendingVerification),
+        );
+        go("emailVerification");
+        return toast("Digite o código enviado ao seu e-mail.");
+      }
       currentAuthUser = authData.user;
       delete data.password;
       const { error: profileError } = await supabaseClient.from("perfis").insert({
@@ -868,7 +998,14 @@ function bind() {
       e.preventDefault();
       const data = Object.fromEntries(new FormData(providerLoginForm));
       const { data: authData, error } = await supabaseClient.auth.signInWithPassword(data);
-      if (error) return toast("E-mail ou senha incorretos.");
+      if (error) {
+        if (String(error.message).toLowerCase().includes("email not confirmed")) {
+          state.pendingVerification = { email: data.email, role: "guincheiro" };
+          localStorage.setItem("gj_pending_verification", JSON.stringify(state.pendingVerification));
+          go("emailVerification");
+        }
+        return toast(authMessage(error));
+      }
       currentAuthUser = authData.user;
       let { data: profile } = await supabaseClient.from("perfis").select("*").eq("id", currentAuthUser.id).maybeSingle();
       if (!profile) {

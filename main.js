@@ -152,8 +152,28 @@ function clientVerification() {
 function payments() {
   return `${header("Pagamentos", true)}<main class="content"><h1 class="section-title">Formas de pagamento</h1><p class="subtitle">Escolha como pagar os atendimentos.</p>${securityNotice()}<section class="card"><button class="payment-choice selected" data-payment="pix"><b>◆</b><span>Pix<small>QR Code ou copia e cola</small></span><strong>›</strong></button><button class="payment-choice" data-payment="card"><b>▣</b><span>Cartão<small>Crédito ou débito tokenizado</small></span><strong>›</strong></button></section><div id="payment-form"></div></main>`;
 }
+function passwordField() {
+  return `<label class="field password-field"><span>Senha</span><div class="password-input-wrap"><input name="password" required type="password" minlength="8" autocomplete="new-password" placeholder="Mínimo de 8 caracteres" /><button class="password-toggle" type="button" aria-label="Mostrar senha">👁</button></div><div class="password-strength" aria-live="polite"><div class="password-strength-track"><i></i></div><b>Digite uma senha segura</b></div><small class="password-rules">Use maiúscula, minúscula, número e símbolo.</small></label>`;
+}
+
+function passwordSecurity(password) {
+  const checks = [
+    password.length >= 8,
+    /[a-z]/.test(password),
+    /[A-Z]/.test(password),
+    /\d/.test(password),
+    /[^A-Za-z0-9]/.test(password),
+  ];
+  const score = checks.filter(Boolean).length;
+  return {
+    score,
+    valid: score === checks.length,
+    label: score <= 2 ? "Senha fraca" : score < 5 ? "Senha média" : "Senha forte",
+    level: score <= 2 ? "weak" : score < 5 ? "medium" : "strong",
+  };
+}
 function signup() {
-  return `${header("Criar conta", true)}<main class="content"><h1 class="section-title">Vamos começar</h1><p class="subtitle">Crie sua conta de cliente.</p><form id="signup"><label class="field"><span>Nome completo</span><input name="name" required minlength="3" placeholder="Seu nome" /></label><label class="field"><span>Celular</span><input name="phone" required inputmode="tel" placeholder="(11) 99999-9999" /></label><label class="field"><span>E-mail</span><input name="email" required type="email" placeholder="voce@email.com" /></label><label class="field"><span>Senha</span><input name="password" required type="password" minlength="6" placeholder="Mínimo de 6 caracteres" /></label><label class="field"><span>Veículo (opcional)</span><input name="vehicle" placeholder="Ex.: Astra 2.0" /></label><button class="btn primary">CRIAR CONTA</button><button type="button" class="btn secondary login-link" data-go="clientLogin">JÁ TENHO CADASTRO</button></form></main>`;
+  return `${header("Criar conta", true)}<main class="content"><h1 class="section-title">Vamos começar</h1><p class="subtitle">Crie sua conta de cliente.</p><form id="signup"><label class="field"><span>Nome completo</span><input name="name" required minlength="3" placeholder="Seu nome" /></label><label class="field"><span>Celular</span><input name="phone" required inputmode="tel" placeholder="(11) 99999-9999" /></label><label class="field"><span>E-mail</span><input name="email" required type="email" placeholder="voce@email.com" /></label>${passwordField()}<label class="field"><span>Veículo (opcional)</span><input name="vehicle" placeholder="Ex.: Astra 2.0" /></label><button class="btn primary">CRIAR CONTA</button><button type="button" class="btn secondary login-link" data-go="clientLogin">JÁ TENHO CADASTRO</button></form></main>`;
 }
 function clientLogin() {
   return `${header("Entrar como cliente", true)}<main class="content"><h1 class="section-title">Bem-vindo de volta</h1><p class="subtitle">Entre com o e-mail e a senha cadastrados.</p><form id="client-login"><label class="field"><span>E-mail</span><input name="email" required type="email" placeholder="voce@email.com" /></label><label class="field"><span>Senha</span><input name="password" required type="password" placeholder="Sua senha" /></label><button class="btn primary">ENTRAR</button><button type="button" class="btn secondary login-link" data-go="signup">CRIAR NOVA CONTA</button><p class="legal">Conta criada antes da versão 0.5? Use o celular cadastrado como senha.</p></form></main>`;
@@ -501,7 +521,7 @@ function providerNav(active = "dashboard") {
   return `<nav class="bottom-nav"><button class="nav-item ${active === "dashboard" ? "active" : ""}" data-go="providerDashboard"><b>⌂</b>Início</button><button class="nav-item ${active === "jobs" ? "active" : ""}" data-go="providerJobs"><b>☷</b>Corridas</button><button class="nav-item ${active === "earnings" ? "active" : ""}" data-go="providerEarnings"><b>R$</b>Ganhos</button><button class="nav-item ${active === "account" ? "active" : ""}" data-go="providerAccount"><b>♙</b>Perfil</button></nav>`;
 }
 function providerSignup() {
-  return `${header("Cadastro do guincheiro", true)}<main class="content"><h1 class="section-title">Trabalhe com o GuincheJá</h1><p class="subtitle">Cadastre o responsável e o guincho.</p><form id="provider-signup"><label class="field"><span>Nome completo</span><input name="name" required minlength="3" placeholder="Nome do responsável"></label><label class="field"><span>Celular</span><input name="phone" required inputmode="tel" placeholder="(11) 99999-9999"></label><label class="field"><span>E-mail</span><input name="email" required type="email" placeholder="voce@email.com"></label><label class="field"><span>CPF ou CNPJ</span><input name="document" required placeholder="Documento"></label><label class="field"><span>Senha</span><input name="password" required type="password" minlength="6" placeholder="Mínimo de 6 caracteres"></label><label class="field"><span>Tipo de guincho</span><select name="towType" required><option value="">Selecione</option><option>Guincho plataforma</option><option>Guincho lança</option><option>Guincho para motos</option></select></label><label class="field"><span>Placa</span><input name="plate" required maxlength="7" placeholder="ABC1D23"></label><button class="btn primary">CRIAR PERFIL DE GUINCHEIRO</button><button type="button" class="btn secondary login-link" data-go="providerLogin">JÁ TENHO CADASTRO</button><p class="legal">A localização será compartilhada somente durante um chamado aceito.</p></form></main>`;
+  return `${header("Cadastro do guincheiro", true)}<main class="content"><h1 class="section-title">Trabalhe com o GuincheJá</h1><p class="subtitle">Cadastre o responsável e o guincho.</p><form id="provider-signup"><label class="field"><span>Nome completo</span><input name="name" required minlength="3" placeholder="Nome do responsável"></label><label class="field"><span>Celular</span><input name="phone" required inputmode="tel" placeholder="(11) 99999-9999"></label><label class="field"><span>E-mail</span><input name="email" required type="email" placeholder="voce@email.com"></label><label class="field"><span>CPF ou CNPJ</span><input name="document" required placeholder="Documento"></label>${passwordField()}<label class="field"><span>Tipo de guincho</span><select name="towType" required><option value="">Selecione</option><option>Guincho plataforma</option><option>Guincho lança</option><option>Guincho para motos</option></select></label><label class="field"><span>Placa</span><input name="plate" required maxlength="7" placeholder="ABC1D23"></label><button class="btn primary">CRIAR PERFIL DE GUINCHEIRO</button><button type="button" class="btn secondary login-link" data-go="providerLogin">JÁ TENHO CADASTRO</button><p class="legal">A localização será compartilhada somente durante um chamado aceito.</p></form></main>`;
 }
 function providerLogin() {
   return `${header("Entrar como guincheiro", true)}<main class="content"><h1 class="section-title">Acesse seu painel</h1><p class="subtitle">Entre com o e-mail e a senha cadastrados.</p><form id="provider-login"><label class="field"><span>E-mail</span><input name="email" required type="email" placeholder="voce@email.com"></label><label class="field"><span>Senha</span><input name="password" required type="password" placeholder="Sua senha"></label><button class="btn primary">ENTRAR</button><button type="button" class="btn secondary login-link" data-go="providerSignup">CRIAR NOVO CADASTRO</button></form></main>`;
@@ -624,6 +644,28 @@ function bind() {
   document
     .querySelectorAll("[data-go]")
     .forEach((b) => (b.onclick = () => go(b.dataset.go)));
+  document.querySelectorAll(".password-field").forEach((field) => {
+    const input = field.querySelector("input[type='password']");
+    const toggle = field.querySelector(".password-toggle");
+    const strength = field.querySelector(".password-strength");
+    const update = () => {
+      const result = passwordSecurity(input.value);
+      strength.className = `password-strength ${input.value ? result.level : ""}`;
+      strength.querySelector("b").textContent = input.value
+        ? result.label
+        : "Digite uma senha segura";
+      strength.querySelector("i").style.width = input.value
+        ? `${Math.max(20, result.score * 20)}%`
+        : "0%";
+    };
+    input.addEventListener("input", update);
+    toggle.onclick = () => {
+      const showing = input.type === "text";
+      input.type = showing ? "password" : "text";
+      toggle.textContent = showing ? "👁" : "🙈";
+      toggle.setAttribute("aria-label", showing ? "Mostrar senha" : "Ocultar senha");
+    };
+  });
   const installButton = document.querySelector("#install-app");
   if (installButton)
     installButton.onclick = async () => {
@@ -687,6 +729,8 @@ function bind() {
     form.onsubmit = async (e) => {
       e.preventDefault();
       const data = Object.fromEntries(new FormData(form));
+      if (!passwordSecurity(data.password).valid)
+        return toast("Use uma senha forte com 8 caracteres, maiúscula, minúscula, número e símbolo.");
       const { data: authData, error } = await supabaseClient.auth.signUp({
         email: data.email,
         password: data.password,
@@ -953,6 +997,8 @@ function bind() {
     providerForm.onsubmit = async (e) => {
       e.preventDefault();
       const data = Object.fromEntries(new FormData(providerForm));
+      if (!passwordSecurity(data.password).valid)
+        return toast("Use uma senha forte com 8 caracteres, maiúscula, minúscula, número e símbolo.");
       const { data: authData, error } = await supabaseClient.auth.signUp({
         email: data.email,
         password: data.password,

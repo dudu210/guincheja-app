@@ -242,6 +242,58 @@ button {
 .otp-option form {
   margin-top: 16px;
 }
+.password-input-wrap {
+  position: relative;
+}
+.password-input-wrap input {
+  padding-right: 54px;
+}
+.password-toggle {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 42px;
+  height: 42px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  font-size: 20px;
+}
+.password-strength {
+  margin-top: 8px;
+}
+.password-strength-track {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: #dce3ec;
+  margin-bottom: 5px;
+}
+.password-strength-track i {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--muted);
+  transition: width 0.2s, background 0.2s;
+}
+.password-strength b {
+  font-size: 12px;
+  color: var(--muted);
+}
+.password-strength.weak i { background: var(--red); }
+.password-strength.weak b { color: var(--red); }
+.password-strength.medium i { background: #e99513; }
+.password-strength.medium b { color: #a46400; }
+.password-strength.strong i { background: var(--green); }
+.password-strength.strong b { color: var(--green); }
+.password-rules {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-weight: 500;
+}
 .section-title {
   font-size: 20px;
   margin: 0 0 5px;

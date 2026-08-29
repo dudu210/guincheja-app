@@ -88,6 +88,7 @@ const icons = {
   acidente: "⚠️",
   outro: "•••",
 };
+const PRICING = { dispatchFee: 90, driverKmRate: 3, transportKmRate: 5, minimum: 150, estimatedDriverKm: 5, platformCommissionRate: 0.15 };
 function money(v) {
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
@@ -476,15 +477,18 @@ function problem() {
   return `${header("Detalhes", true)}<main class="content"><h1 class="section-title">O que aconteceu?</h1><p class="subtitle">Selecione a opção que melhor descreve o problema.</p><div class="grid">${problems.map(([id, label]) => `<button class="choice ${state.request.problem === id ? "selected" : ""}" data-problem="${id}"><b>${icons[id]}</b>${label}</button>`).join("")}</div><h2 class="section-title" style="margin-top:22px">Qual é o veículo?</h2><div class="grid">${vehicles.map(([id, icon, label]) => `<button class="choice ${state.request.vehicle === id ? "selected" : ""}" data-vehicle="${id}"><b>${icon}</b>${label}</button>`).join("")}</div><button class="btn primary" id="to-quote" style="margin-top:18px">VER ESTIMATIVA</button></main>`;
 }
 function calcPrice() {
-  const p =
-    { carro: 149.9, moto: 99.9, utilitario: 189.9 }[state.request.vehicle] ||
-    149.9;
-  return p + Math.min(state.request.destination.length * 0.7, 35);
+  const driverKm = state.request?.driverKm || PRICING.estimatedDriverKm;
+  const transportKm = state.request?.transportKm || 10;
+  const dispatch = PRICING.dispatchFee;
+  const driverTravel = driverKm * PRICING.driverKmRate;
+  const transport = transportKm * PRICING.transportKmRate;
+  const subtotal = dispatch + driverTravel + transport;
+  return { dispatch, driverKm, driverTravel, transportKm, transport, subtotal, total: Math.max(PRICING.minimum, subtotal) };
 }
 function quote() {
-  const price = calcPrice();
-  state.request.price = price;
-  return `${header("Confirmar", true)}<main class="content"><div class="map"><div class="route"></div><div class="pin you"><span>●</span></div><div class="pin tow"><span>🚛</span></div></div><section class="card"><div class="eyebrow" style="color:var(--navy2)">VALOR ESTIMADO</div><div class="price">${money(price)}</div><p class="muted">Estimativa demonstrativa • chegada em 12–18 min</p><div class="summary-row"><span>Origem</span><b>${state.request.origin}</b></div><div class="summary-row"><span>Destino</span><b>${state.request.destination}</b></div><div class="summary-row"><span>Serviço</span><b>${problems.find((x) => x[0] === state.request.problem)?.[1]}</b></div></section><button class="btn primary" id="confirm">CONFIRMAR SOLICITAÇÃO</button><p class="legal">Nenhuma cobrança real será realizada neste MVP.</p></main>`;
+  const details = calcPrice();
+  state.request.price = details.total;
+  return `${header("Confirmar", true)}<main class="content"><div class="map"><div class="route"></div><div class="pin you"><span>●</span></div><div class="pin tow"><span>🚛</span></div></div><section class="card"><div class="eyebrow" style="color:var(--navy2)">ORÇAMENTO ESTIMADO</div><div class="price">${money(details.total)}</div><p class="muted">Percurso inicial estimado • guincheiro a até 5 km</p><div class="summary-row"><span>Taxa de saída</span><b>${money(details.dispatch)}</b></div><div class="summary-row"><span>Guincheiro até você (${details.driverKm.toFixed(1)} km × R$ 3)</span><b>${money(details.driverTravel)}</b></div><div class="summary-row"><span>Transporte (${details.transportKm.toFixed(1)} km × R$ 5)</span><b>${money(details.transport)}</b></div>${details.subtotal < PRICING.minimum ? `<div class="summary-row"><span>Tarifa mínima</span><b>${money(PRICING.minimum)}</b></div>` : ""}<div class="summary-row"><span>Origem</span><b>${state.request.origin}</b></div><div class="summary-row"><span>Destino</span><b>${state.request.destination}</b></div><div class="summary-row"><span>Serviço</span><b>${problems.find((x) => x[0] === state.request.problem)?.[1]}</b></div></section><section class="security-note"><b>Preço transparente</b><span>Pedágios e adicionais serão informados antes da cobrança.</span></section><button class="btn primary" id="confirm">CONFIRMAR SOLICITAÇÃO</button><p class="legal">Estimativa do MVP. O percurso será recalculado com a rota real na próxima integração.</p></main>`;
 }
 function searching() {
   return `${header("Buscando guincho", true)}<main class="content"><section class="status"><div class="pulse">🚛</div><h1 class="section-title">Procurando parceiros próximos…</h1><p class="subtitle">Isso normalmente leva poucos segundos.</p><div class="progress"><span id="search-progress" style="width:15%"></span></div></section><button class="btn danger" id="cancel">CANCELAR SOLICITAÇÃO</button></main>`;

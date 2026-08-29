@@ -28,6 +28,8 @@ const initialState = {
   lastRole: savedRole,
   providerOnline: false,
   providerJob: null,
+  proposals: [],
+  providerProposal: null,
   request: null,
   rating: 0,
   history: JSON.parse(localStorage.getItem("gj_history") || "[]"),
@@ -414,7 +416,20 @@ function watchClientRequest(requestId) {
         }
       },
     )
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: "propostas", filter: `chamado_id=eq.${requestId}` },
+      loadClientProposals,
+    )
     .subscribe();
+  loadClientProposals();
+}
+
+async function loadClientProposals() {
+  if (!state.request?.id || !supabaseClient) return;
+  const { data } = await supabaseClient.from("propostas").select("*").eq("chamado_id", state.request.id).eq("status", "enviada").order("valor_proposto").limit(3);
+  state.proposals = data || [];
+  if (state.screen === "searching") render();
 }
 
 async function loadAvailableRequest() {
@@ -438,6 +453,16 @@ function watchAvailableRequests() {
   realtimeChannel = supabaseClient
     .channel("chamados-disponiveis")
     .on("postgres_changes", { event: "*", schema: "public", table: "chamados" }, loadAvailableRequest)
+    .on("postgres_changes", { event: "UPDATE", schema: "public", table: "propostas", filter: `guincheiro_id=eq.${currentAuthUser?.id}` }, async ({ new: proposal }) => {
+      if (proposal.status !== "aceita") return;
+      const { data: job } = await supabaseClient.from("chamados").select("*").eq("id", proposal.chamado_id).single();
+      if (!job) return;
+      stopRealtime();
+      state.providerJob = { ...job, step: 0 };
+      state.availableRequest = null;
+      go("providerTrip");
+      toast("Sua proposta foi escolhida!");
+    })
     .subscribe();
   loadAvailableRequest();
 }
@@ -491,7 +516,8 @@ function quote() {
   return `${header("Confirmar", true)}<main class="content"><div class="map"><div class="route"></div><div class="pin you"><span>●</span></div><div class="pin tow"><span>🚛</span></div></div><section class="card"><div class="eyebrow" style="color:var(--navy2)">ORÇAMENTO ESTIMADO</div><div class="price">${money(details.total)}</div><p class="muted">Percurso inicial estimado • guincheiro a até 5 km</p><div class="summary-row"><span>Taxa de saída</span><b>${money(details.dispatch)}</b></div><div class="summary-row"><span>Guincheiro até você (${details.driverKm.toFixed(1)} km × R$ 3)</span><b>${money(details.driverTravel)}</b></div><div class="summary-row"><span>Transporte (${details.transportKm.toFixed(1)} km × R$ 5)</span><b>${money(details.transport)}</b></div>${details.subtotal < PRICING.minimum ? `<div class="summary-row"><span>Tarifa mínima</span><b>${money(PRICING.minimum)}</b></div>` : ""}<div class="summary-row"><span>Origem</span><b>${state.request.origin}</b></div><div class="summary-row"><span>Destino</span><b>${state.request.destination}</b></div><div class="summary-row"><span>Serviço</span><b>${problems.find((x) => x[0] === state.request.problem)?.[1]}</b></div></section><section class="security-note"><b>Preço transparente</b><span>Pedágios e adicionais serão informados antes da cobrança.</span></section><button class="btn primary" id="confirm">CONFIRMAR SOLICITAÇÃO</button><p class="legal">Estimativa do MVP. O percurso será recalculado com a rota real na próxima integração.</p></main>`;
 }
 function searching() {
-  return `${header("Buscando guincho", true)}<main class="content"><section class="status"><div class="pulse">🚛</div><h1 class="section-title">Procurando parceiros próximos…</h1><p class="subtitle">Isso normalmente leva poucos segundos.</p><div class="progress"><span id="search-progress" style="width:15%"></span></div></section><button class="btn danger" id="cancel">CANCELAR SOLICITAÇÃO</button></main>`;
+  const offers = state.proposals || [];
+  return `${header("Escolher proposta", true)}<main class="content"><section class="status"><div class="pulse">🚛</div><h1 class="section-title">${offers.length ? "Propostas recebidas" : "Procurando parceiros próximos…"}</h1><p class="subtitle">Compare preço e previsão de chegada.</p></section>${offers.map((p, i) => `<section class="card incoming"><div class="summary-row"><strong>Guincheiro ${i + 1}</strong><span class="badge">★ NOVA</span></div><div class="summary-row"><span>Valor</span><strong class="price" style="font-size:22px">${money(Number(p.valor_proposto))}</strong></div><div class="summary-row"><span>Chegada estimada</span><b>${p.chegada_minutos} min</b></div><div class="summary-row"><span>Pagamento</span><b>${(p.formas_pagamento || []).join(", ").toUpperCase()}</b></div><button class="btn primary" data-choose-proposal="${p.id}" data-price="${p.valor_proposto}">ESCOLHER ESTA PROPOSTA</button></section>`).join("")}${!offers.length ? `<div class="progress"><span id="search-progress" style="width:15%"></span></div>` : ""}<button class="btn danger" id="cancel">CANCELAR SOLICITAÇÃO</button></main>`;
 }
 function tracking() {
   return `${header("Guincho a caminho", true)}<main class="content"><div id="tracking-map" class="real-map tracking-real-map" role="application" aria-label="Localização do guincheiro em tempo real"></div><section class="card"><div class="driver"><div class="avatar">🚛</div><div class="driver-info"><strong>Guincheiro a caminho</strong><span class="muted" id="tracking-update">Aguardando localização do guincheiro…</span></div><span class="badge">AO VIVO</span></div><div class="summary-row"><span>Distância aproximada</span><b id="tracking-distance">Calculando…</b></div><div class="summary-row"><span>Previsão de chegada</span><b id="tracking-eta">Calculando…</b></div></section><section class="security-note"><b>📍 Localização protegida</b><span>O compartilhamento termina quando o atendimento for finalizado.</span></section><button class="btn secondary" id="call" style="margin-top:10px">LIGAR PARA O MOTORISTA</button></main>`;
@@ -534,7 +560,7 @@ function providerDashboard() {
   if (!state.providerLoggedIn)
     return state.provider ? providerLogin() : providerSignup();
   const job = state.availableRequest;
-  return `${header("Painel do guincheiro", true)}<main class="content"><section class="provider-status ${state.providerOnline ? "online" : ""}"><div><strong><span class="status-dot"></span>${state.providerOnline ? "Você está online" : "Você está offline"}</strong><small>${state.providerOnline ? "Recebendo solicitações próximas" : "Ative para começar a receber chamados"}</small></div><button id="toggle-online">${state.providerOnline ? "FICAR OFFLINE" : "FICAR ONLINE"}</button></section><h2 class="section-title">Chamados disponíveis</h2>${state.providerOnline && job ? `<section class="card incoming"><div class="eyebrow" style="color:var(--navy2)">NOVA SOLICITAÇÃO</div><h2>${job.problema || "Solicitação de guincho"}</h2><p>${job.veiculo || "Veículo"} • ${job.area || "São Paulo"}</p><div class="summary-row"><span>Coleta</span><b>${job.origem || "Localização do cliente"}</b></div><div class="summary-row"><span>Destino</span><b>${job.destino || "Não informado"}</b></div><div class="summary-row"><span>Valor estimado</span><strong class="price" style="font-size:23px">${money(Number(job.preco || 0))}</strong></div><div class="grid"><button class="btn danger" id="provider-decline">RECUSAR</button><button class="btn primary" id="provider-accept">ACEITAR</button></div></section>` : `<section class="empty"><b>🚛</b><h2>${state.providerOnline ? "Aguardando chamado…" : "Pronto para trabalhar?"}</h2><p class="muted">${state.providerOnline ? "Novos pedidos aparecerão automaticamente." : "Fique online para receber uma solicitação."}</p></section>`}</main>${providerNav("dashboard")}`;
+  return `${header("Painel do guincheiro", true)}<main class="content"><section class="provider-status ${state.providerOnline ? "online" : ""}"><div><strong><span class="status-dot"></span>${state.providerOnline ? "Você está online" : "Você está offline"}</strong><small>${state.providerOnline ? "Recebendo solicitações próximas" : "Ative para começar a receber chamados"}</small></div><button id="toggle-online">${state.providerOnline ? "FICAR OFFLINE" : "FICAR ONLINE"}</button></section><h2 class="section-title">Chamados disponíveis</h2>${state.providerOnline && job ? `<section class="card incoming"><div class="eyebrow" style="color:var(--navy2)">NOVA SOLICITAÇÃO</div><h2>${job.problema || "Solicitação de guincho"}</h2><p>${job.veiculo || "Veículo"} • ${job.area || "São Paulo"}</p><div class="summary-row"><span>Coleta</span><b>${job.origem || "Localização do cliente"}</b></div><div class="summary-row"><span>Destino</span><b>${job.destino || "Não informado"}</b></div><div class="summary-row"><span>Preço recomendado</span><strong class="price" style="font-size:23px">${money(Number(job.preco || 0))}</strong></div><form id="provider-proposal"><label class="field"><span>Seu valor</span><input name="price" required type="number" min="1" step="0.01" value="${Number(job.preco || 150).toFixed(2)}"></label><label class="field"><span>Tempo para chegar</span><select name="eta"><option value="10">10 minutos</option><option value="20">20 minutos</option><option value="30">30 minutos</option><option value="45">45 minutos</option><option value="60">60 minutos</option></select></label><label class="check"><input type="checkbox" name="pix" checked> Pix</label><label class="check"><input type="checkbox" name="credit" checked> Cartão de crédito</label><button class="btn primary">ENVIAR PROPOSTA</button><button type="button" class="btn danger login-link" id="provider-decline">RECUSAR</button></form></section>` : `<section class="empty"><b>🚛</b><h2>${state.providerOnline ? "Aguardando chamado…" : "Pronto para trabalhar?"}</h2><p class="muted">${state.providerOnline ? "Novos pedidos aparecerão automaticamente." : "Fique online para receber uma solicitação."}</p></section>`}</main>${providerNav("dashboard")}`;
 }
 function providerTrip() {
   const step = state.providerJob?.step || 0;
@@ -1110,6 +1136,45 @@ function bind() {
       render();
       toast("Solicitação recusada.");
     };
+  const proposalForm = document.querySelector("#provider-proposal");
+  if (proposalForm)
+    proposalForm.onsubmit = async (event) => {
+      event.preventDefault();
+      const available = state.availableRequest;
+      if (!available || !currentAuthUser) return;
+      const form = new FormData(proposalForm);
+      const payments = [];
+      if (form.get("pix")) payments.push("pix");
+      if (form.get("credit")) payments.push("credito");
+      if (!payments.length) return toast("Selecione uma forma de pagamento.");
+      const { data, error } = await supabaseClient.from("propostas").insert({
+        chamado_id: available.id,
+        guincheiro_id: currentAuthUser.id,
+        valor_recomendado: Number(available.preco || 0),
+        valor_proposto: Number(form.get("price")),
+        chegada_minutos: Number(form.get("eta")),
+        formas_pagamento: payments,
+      }).select().single();
+      if (error) return toast(error.code === "23505" ? "Você já enviou uma proposta para este chamado." : "Não foi possível enviar a proposta.");
+      state.providerProposal = data;
+      state.availableRequest = null;
+      render();
+      toast("Proposta enviada. Aguarde a escolha do cliente.");
+    };
+  document.querySelectorAll("[data-choose-proposal]").forEach((button) => {
+    button.onclick = async () => {
+      button.disabled = true;
+      button.textContent = "CONFIRMANDO…";
+      const { data, error } = await supabaseClient.rpc("aceitar_proposta", { proposta_escolhida: button.dataset.chooseProposal });
+      if (error || !data) {
+        button.disabled = false;
+        button.textContent = "ESCOLHER ESTA PROPOSTA";
+        return toast("Esta proposta não está mais disponível.");
+      }
+      state.request.price = Number(button.dataset.price);
+      toast("Proposta escolhida! Aguardando o guincheiro.");
+    };
+  });
   const accept = document.querySelector("#provider-accept");
   if (accept)
     accept.onclick = async () => {

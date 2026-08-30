@@ -296,29 +296,33 @@ function locateCurrentPosition(showError = true) {
   locate.textContent = "…";
   locate.disabled = true;
   if (status) status.textContent = "Buscando sua posição atual…";
-  navigator.geolocation.getCurrentPosition(
+  let bestPosition = null;
+  let finished = false;
+  const finish = (position) => {
+    if (finished || !position) return;
+    finished = true;
+    navigator.geolocation.clearWatch(watchId);
+    clearTimeout(captureTimeout);
+    const latitude = Number(position.coords.latitude.toFixed(6));
+    const longitude = Number(position.coords.longitude.toFixed(6));
+    const accuracy = Math.round(position.coords.accuracy || 0);
+    const origin = `Minha localização (${latitude}, ${longitude})`;
+    input.value = origin;
+    state.request = { ...(state.request || {}), origin, latitude, longitude, accuracy };
+    locate.textContent = "✓";
+    locate.disabled = false;
+    if (status) status.textContent = `Localização confirmada • precisão aproximada de ${accuracy} m`;
+    locationRequestInProgress = false;
+    showCurrentPositionOnMap(latitude, longitude, accuracy);
+    toast(accuracy <= 50 ? "Localização precisa encontrada!" : "Localização encontrada. Confira o ponto no mapa.");
+  };
+  const watchId = navigator.geolocation.watchPosition(
     (position) => {
-      const latitude = Number(position.coords.latitude.toFixed(6));
-      const longitude = Number(position.coords.longitude.toFixed(6));
       const accuracy = Math.round(position.coords.accuracy || 0);
-      const origin = `Minha localização (${latitude}, ${longitude})`;
-      input.value = origin;
-      state.request = {
-        ...(state.request || {}),
-        origin,
-        latitude,
-        longitude,
-        accuracy,
-      };
-      locate.textContent = "✓";
-      locate.disabled = false;
-      if (status)
-        status.textContent = accuracy
-          ? `Localização encontrada • precisão aproximada de ${accuracy} m`
-          : "Localização encontrada";
-      locationRequestInProgress = false;
-      showCurrentPositionOnMap(latitude, longitude, accuracy);
-      toast("Localização atual encontrada!");
+      if (!bestPosition || accuracy < bestPosition.coords.accuracy) bestPosition = position;
+      if (status) status.textContent = `Ajustando precisão do GPS… ${accuracy} m`;
+      showCurrentPositionOnMap(position.coords.latitude, position.coords.longitude, accuracy);
+      if (accuracy > 0 && accuracy <= 25) finish(position);
     },
     (error) => {
       const messages = {
@@ -326,14 +330,20 @@ function locateCurrentPosition(showError = true) {
         2: "Não foi possível encontrar sua posição. Verifique se o GPS está ligado.",
         3: "O GPS demorou para responder. Toque no botão para tentar novamente.",
       };
-      locate.textContent = "◎";
-      locate.disabled = false;
-      if (status) status.textContent = messages[error.code] || "Localização indisponível";
-      locationRequestInProgress = false;
-      if (showError) toast(messages[error.code] || "Digite o endereço manualmente.");
+      if (!bestPosition) {
+        finished = true;
+        clearTimeout(captureTimeout);
+        navigator.geolocation.clearWatch(watchId);
+        locate.textContent = "◎";
+        locate.disabled = false;
+        if (status) status.textContent = messages[error.code] || "Localização indisponível";
+        locationRequestInProgress = false;
+        if (showError) toast(messages[error.code] || "Digite o endereço manualmente.");
+      }
     },
-    { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 },
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
   );
+  const captureTimeout = setTimeout(() => finish(bestPosition), 10000);
 }
 
 function stopRealtime() {

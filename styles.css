@@ -11,6 +11,14 @@
   --line: #e4eaf1;
   --shadow: 0 16px 42px rgba(7, 27, 51, 0.12);
 }
+.navigation-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 52px;
+  text-align: center;
+  text-decoration: none;
+}
 * {
   box-sizing: border-box;
 }

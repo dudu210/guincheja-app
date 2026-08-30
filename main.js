@@ -402,6 +402,27 @@ function updateDriverOnTrackingMap(latitude, longitude, updatedAt) {
     update.textContent = `Atualizado ${updatedAt ? new Date(updatedAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }) : "agora"}`;
 }
 
+const clientStatusMessages = {
+  aceito: "Guincheiro a caminho do local de retirada",
+  chegou: "O guincheiro chegou ao local de retirada",
+  carregando: "O veículo está sendo preparado para o transporte",
+  em_transporte: "Seu veículo está a caminho do destino",
+  finalizado: "O guincheiro chegou ao local de entrega do veículo",
+};
+
+function notifyClientStatus(status) {
+  const message = clientStatusMessages[status];
+  if (!message || state.request?.lastNotifiedStatus === status) return;
+  state.request.lastNotifiedStatus = status;
+  state.request.status = status;
+  toast(message);
+  const statusBox = document.querySelector("#client-service-status");
+  if (statusBox) statusBox.textContent = message;
+  if (navigator.vibrate) navigator.vibrate([180, 80, 180]);
+  if ("Notification" in window && Notification.permission === "granted")
+    new Notification("GuincheJá", { body: message, icon: "./assets/guincheja-app-icon-v2.png", tag: `guincheja-${status}` });
+}
+
 function watchClientRequest(requestId) {
   if (!supabaseClient || !requestId) return;
   stopRealtime();
@@ -414,6 +435,7 @@ function watchClientRequest(requestId) {
         state.request.driverLatitude = job.guincheiro_latitude;
         state.request.driverLongitude = job.guincheiro_longitude;
         state.request.locationUpdatedAt = job.localizacao_atualizada_em;
+        notifyClientStatus(job.status);
         if (job.status === "aceito" && state.screen === "searching") {
           go("tracking");
           toast("Um guincheiro aceitou seu chamado!");
@@ -530,7 +552,8 @@ function searching() {
   return `${header("Escolher proposta", true)}<main class="content"><section class="status"><div class="pulse">🚛</div><h1 class="section-title">${offers.length ? "Propostas recebidas" : "Procurando parceiros próximos…"}</h1><p class="subtitle">Compare preço e previsão de chegada.</p></section>${offers.map((p, i) => `<section class="card incoming"><div class="summary-row"><strong>Guincheiro ${i + 1}</strong><span class="badge">★ NOVA</span></div><div class="summary-row"><span>Valor</span><strong class="price" style="font-size:22px">${money(Number(p.valor_proposto))}</strong></div><div class="summary-row"><span>Chegada estimada</span><b>${p.chegada_minutos} min</b></div><div class="summary-row"><span>Pagamento</span><b>${(p.formas_pagamento || []).join(", ").toUpperCase()}</b></div><button class="btn primary" data-choose-proposal="${p.id}" data-price="${p.valor_proposto}">ESCOLHER ESTA PROPOSTA</button></section>`).join("")}${!offers.length ? `<div class="progress"><span id="search-progress" style="width:15%"></span></div>` : ""}<button class="btn danger" id="cancel">CANCELAR SOLICITAÇÃO</button></main>`;
 }
 function tracking() {
-  return `${header("Guincho a caminho", true)}<main class="content"><div id="tracking-map" class="real-map tracking-real-map" role="application" aria-label="Localização do guincheiro em tempo real"></div><section class="card"><div class="driver"><div class="avatar">🚛</div><div class="driver-info"><strong>Guincheiro a caminho</strong><span class="muted" id="tracking-update">Aguardando localização do guincheiro…</span></div><span class="badge">AO VIVO</span></div><div class="summary-row"><span>Distância aproximada</span><b id="tracking-distance">Calculando…</b></div><div class="summary-row"><span>Previsão de chegada</span><b id="tracking-eta">Calculando…</b></div></section><section class="security-note"><b>📍 Localização protegida</b><span>O compartilhamento termina quando o atendimento for finalizado.</span></section><button class="btn secondary" id="call" style="margin-top:10px">LIGAR PARA O MOTORISTA</button></main>`;
+  const serviceStatus = clientStatusMessages[state.request?.status] || "Guincheiro a caminho do local de retirada";
+  return `${header("Acompanhar atendimento", true)}<main class="content"><section class="security-note"><b>ETAPA ATUAL</b><span id="client-service-status">${serviceStatus}</span></section><div id="tracking-map" class="real-map tracking-real-map" role="application" aria-label="Localização do guincheiro em tempo real"></div><section class="card"><div class="driver"><div class="avatar">🚛</div><div class="driver-info"><strong>Guincheiro em atendimento</strong><span class="muted" id="tracking-update">Aguardando localização do guincheiro…</span></div><span class="badge">AO VIVO</span></div><div class="summary-row"><span>Distância aproximada</span><b id="tracking-distance">Calculando…</b></div><div class="summary-row"><span>Previsão de chegada</span><b id="tracking-eta">Calculando…</b></div></section><section class="security-note"><b>📍 Localização protegida</b><span>O compartilhamento termina quando o atendimento for finalizado.</span></section><button class="btn secondary" id="call" style="margin-top:10px">LIGAR PARA O MOTORISTA</button></main>`;
 }
 function service() {
   const step = state.request.step || 0;
@@ -908,6 +931,8 @@ function bind() {
   const confirm = document.querySelector("#confirm");
   if (confirm)
     confirm.onclick = async () => {
+      if ("Notification" in window && Notification.permission === "default")
+        Notification.requestPermission().catch(() => {});
       if (!currentAuthUser) {
         toast("Entre novamente para solicitar o guincho.");
         return go("clientLogin");
